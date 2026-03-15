@@ -1,0 +1,39 @@
+[
+    {
+        "name": "Market Monitor",
+        "command": "python",
+        "args": ["finance/market_monitor.py"],
+        "schedule": "hourly",
+        "enabled": true
+    },
+    {
+        "name": "Intel Aggregator",
+        "command": "python",
+        "args": ["finance/intel_aggregator.py"],
+        "schedule": "hourly",
+        "enabled": true
+    },
+    {
+        "name": "Asset Reporter",
+        "command": "python",
+        "args": ["finance/asset_reporter.py"],
+        "schedule": "daily",
+        "hour": 8,
+        "enabled": true
+    },
+    {
+        "name": "Memory Monitor",
+        "command": "python",
+        "args": ["scripts/memory_monitor.py"],
+        "schedule": "daily",
+        "hour": 0,
+        "enabled": true
+    },
+    {
+        "name": "Memory Consolidation",
+        "command": "pwsh.exe",
+        "args": ["-ExecutionPolicy", "Bypass", "-File", "gemini-wrap.ps1", "-p", "'你已经空闲了一个小时, 接下来 read INIT.md and IDLE.md and then 按照它们的指示做。'"],
+        "schedule": "hourly",
+        "enabled": true
+    }
+]
