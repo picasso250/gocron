@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"time"
 )
@@ -20,21 +22,20 @@ type Task struct {
 	Enabled  bool     `json:"enabled"`
 }
 
-const (
-	configFile = "cron.json"
-	logDir     = "log"
-	logFile    = "log/cron.log"
-	interval   = 1 * time.Hour
-)
-
 func main() {
-	// Setup logging
+	configPath := flag.String("config", "cron.json", "Path to the cron configuration file")
+	logPath := flag.String("log", "log/cron.log", "Path to the log file")
+	interval := flag.Duration("interval", 1*time.Hour, "Interval between task runs")
+	flag.Parse()
+
+	// Ensure log directory exists
+	logDir := filepath.Dir(*logPath)
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		fmt.Printf("Error creating log directory: %v\n", err)
 		os.Exit(1)
 	}
 
-	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(*logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Printf("Error opening log file: %v\n", err)
 		os.Exit(1)
@@ -44,22 +45,23 @@ func main() {
 	multiWriter := io.MultiWriter(os.Stdout, f)
 	logger := log.New(multiWriter, "", 0)
 
-	logger.Printf("[%s] [INFO] gocron Service Started. Interval: %v", time.Now().Format("2006-01-02 15:04:05"), interval)
+	logger.Printf("[%s] [INFO] gocron Service Started. Interval: %v", time.Now().Format("2006-01-02 15:04:05"), *interval)
+	logger.Printf("[%s] [INFO] Config: %s, Log: %s", time.Now().Format("2006-01-02 15:04:05"), *configPath, *logPath)
 
 	for {
-		runTasks(logger)
+		runTasks(logger, *configPath)
 		logger.Printf("[%s] [INFO] Sleeping for %v. Next run at %s", 
 			time.Now().Format("2006-01-02 15:04:05"), 
-			interval, 
-			time.Now().Add(interval).Format("15:04:05"))
-		time.Sleep(interval)
+			*interval, 
+			time.Now().Add(*interval).Format("15:04:05"))
+		time.Sleep(*interval)
 	}
 }
 
-func runTasks(logger *log.Logger) {
-	data, err := os.ReadFile(configFile)
+func runTasks(logger *log.Logger, configPath string) {
+	data, err := os.ReadFile(configPath)
 	if err != nil {
-		logger.Printf("[%s] [ERROR] Error reading config file: %v", time.Now().Format("2006-01-02 15:04:05"), err)
+		logger.Printf("[%s] [ERROR] Error reading config file (%s): %v", time.Now().Format("2006-01-02 15:04:05"), configPath, err)
 		return
 	}
 
@@ -73,6 +75,10 @@ func runTasks(logger *log.Logger) {
 	currentHour := now.Hour()
 	logger.Printf("[%s] [INFO] Running scheduled tasks...", now.Format("2006-01-02 15:04:05"))
 
+	// Get the directory of the config file to use as the base for relative paths if needed
+	// But as per original behavior, we run from the current working directory of gocron
+	// We'll stick to running from the directory where gocron is executed (usually the root)
+	
 	for _, task := range tasks {
 		if !task.Enabled {
 			logger.Printf("[%s] [SKIP] %s (disabled)", time.Now().Format("2006-01-02 15:04:05"), task.Name)
@@ -85,22 +91,17 @@ func runTasks(logger *log.Logger) {
 		if isHourly || isDailyMatch {
 			logger.Printf("[%s] [EXEC] %s (%s %v)", time.Now().Format("2006-01-02 15:04:05"), task.Name, task.Command, task.Args)
 			
-			// Handle python execution on windows if needed
 			cmdName := task.Command
-			if runtime.GOOS == "windows" && cmdName == "python" {
-				// Check if 'python' exists, if not try 'py' or 'python3'
-				if _, err := exec.LookPath("python"); err != nil {
-					if _, err := exec.LookPath("python3"); err == nil {
-						cmdName = "python3"
-					} else if _, err := exec.LookPath("py"); err == nil {
+			if runtime.GOOS == "windows" && (cmdName == "python" || cmdName == "python3") {
+				if _, err := exec.LookPath(cmdName); err != nil {
+					if _, err := exec.LookPath("py"); err == nil {
 						cmdName = "py"
 					}
 				}
 			}
 
 			cmd := exec.Command(cmdName, task.Args...)
-			// Run in the parent directory of gocron to match script behavior
-			cmd.Dir = ".." 
+			// Run from the same directory as gocron (root)
 			
 			output, err := cmd.CombinedOutput()
 			if err != nil {
