@@ -28,7 +28,15 @@ func main() {
 	interval := flag.Duration("interval", 1*time.Hour, "Interval between task runs")
 	flag.Parse()
 
-	// Ensure log directory exists
+	// 1. Single Instance Protection using a PID-based lock file
+	lockFilePath := *configPath + ".pid"
+	if err := acquireLock(lockFilePath); err != nil {
+		fmt.Printf("[!] %v\n", err)
+		os.Exit(1)
+	}
+	defer os.Remove(lockFilePath)
+
+	// 2. Setup logging
 	logDir := filepath.Dir(*logPath)
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		fmt.Printf("Error creating log directory: %v\n", err)
@@ -45,8 +53,10 @@ func main() {
 	multiWriter := io.MultiWriter(os.Stdout, f)
 	logger := log.New(multiWriter, "", 0)
 
-	logger.Printf("[%s] [INFO] gocron Service Started. Interval: %v", time.Now().Format("2006-01-02 15:04:05"), *interval)
-	logger.Printf("[%s] [INFO] Config: %s, Log: %s", time.Now().Format("2006-01-02 15:04:05"), *configPath, *logPath)
+	logger.Printf("[%s] [INFO] gocron Service Started. Interval: %v (PID: %d)", 
+		time.Now().Format("2006-01-02 15:04:05"), *interval, os.Getpid())
+	logger.Printf("[%s] [INFO] Config: %s, Log: %s", 
+		time.Now().Format("2006-01-02 15:04:05"), *configPath, *logPath)
 
 	for {
 		runTasks(logger, *configPath)
@@ -56,6 +66,38 @@ func main() {
 			time.Now().Add(*interval).Format("15:04:05"))
 		time.Sleep(*interval)
 	}
+}
+
+func acquireLock(path string) error {
+	data, err := os.ReadFile(path)
+	if err == nil {
+		var oldPid int
+		fmt.Sscanf(string(data), "%d", &oldPid)
+		if isProcessRunning(oldPid) {
+			return fmt.Errorf("another instance of gocron (PID %d) is already running", oldPid)
+		}
+	}
+	// Write current PID to the lock file
+	return os.WriteFile(path, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
+}
+
+func isProcessRunning(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		// On Windows, FindProcess always succeeds. 
+		// We use a specific hack: try to get a handle with 0 access.
+		// For simplicity in this script, we check if the process is still in the task list.
+		cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH")
+		output, _ := cmd.Output()
+		return len(output) > 0 && (string(output)[0] != 'I') // "INFO: No tasks..."
+	}
+	return process.Signal(os.Signal(0)) == nil
 }
 
 func runTasks(logger *log.Logger, configPath string) {
@@ -75,10 +117,6 @@ func runTasks(logger *log.Logger, configPath string) {
 	currentHour := now.Hour()
 	logger.Printf("[%s] [INFO] Running scheduled tasks...", now.Format("2006-01-02 15:04:05"))
 
-	// Get the directory of the config file to use as the base for relative paths if needed
-	// But as per original behavior, we run from the current working directory of gocron
-	// We'll stick to running from the directory where gocron is executed (usually the root)
-	
 	for _, task := range tasks {
 		if !task.Enabled {
 			logger.Printf("[%s] [SKIP] %s (disabled)", time.Now().Format("2006-01-02 15:04:05"), task.Name)
@@ -101,8 +139,6 @@ func runTasks(logger *log.Logger, configPath string) {
 			}
 
 			cmd := exec.Command(cmdName, task.Args...)
-			// Run from the same directory as gocron (root)
-			
 			output, err := cmd.CombinedOutput()
 			if err != nil {
 				logger.Printf("[%s] [FAIL] %s failed: %v", time.Now().Format("2006-01-02 15:04:05"), task.Name, err)
