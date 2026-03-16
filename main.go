@@ -18,7 +18,6 @@ type Task struct {
 	Name    string   `json:"name"`
 	Command string   `json:"command"`
 	Args    []string `json:"args"`
-	Hour    *int     `json:"hour,omitempty"`
 	Enabled bool     `json:"enabled"`
 }
 
@@ -114,7 +113,6 @@ func runTasks(logger *log.Logger, configPath string) {
 	}
 
 	now := time.Now()
-	currentHour := now.Hour()
 	logger.Printf("[%s] [INFO] Running scheduled tasks...", now.Format("2006-01-02 15:04:05"))
 
 	for _, task := range tasks {
@@ -123,34 +121,24 @@ func runTasks(logger *log.Logger, configPath string) {
 			continue
 		}
 
-		shouldRun := task.Hour == nil || *task.Hour == currentHour
+		logger.Printf("[%s] [EXEC] %s (%s %v)", time.Now().Format("2006-01-02 15:04:05"), task.Name, task.Command, task.Args)
 
-		if shouldRun {
-			logger.Printf("[%s] [EXEC] %s (%s %v)", time.Now().Format("2006-01-02 15:04:05"), task.Name, task.Command, task.Args)
-
-			cmdName := task.Command
-			if runtime.GOOS == "windows" && (cmdName == "python" || cmdName == "python3") {
-				if _, err := exec.LookPath(cmdName); err != nil {
-					if _, err := exec.LookPath("py"); err == nil {
-						cmdName = "py"
-					}
+		cmdName := task.Command
+		if runtime.GOOS == "windows" && (cmdName == "python" || cmdName == "python3") {
+			if _, err := exec.LookPath(cmdName); err != nil {
+				if _, err := exec.LookPath("py"); err == nil {
+					cmdName = "py"
 				}
 			}
+		}
 
-			cmd := exec.Command(cmdName, task.Args...)
-			output, err := cmd.CombinedOutput()
-			if err != nil {
-				logger.Printf("[%s] [FAIL] %s failed: %v", time.Now().Format("2006-01-02 15:04:05"), task.Name, err)
-				if len(output) > 0 {
-					logger.Printf("Output: %s", string(output))
-				}
+		cmd := exec.Command(cmdName, task.Args...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			logger.Printf("[%s] [FAIL] %s failed: %v", time.Now().Format("2006-01-02 15:04:05"), task.Name, err)
+			if len(output) > 0 {
+				logger.Printf("Output: %s", string(output))
 			}
-		} else {
-			hourStr := "N/A"
-			if task.Hour != nil {
-				hourStr = fmt.Sprintf("%d", *task.Hour)
-			}
-			logger.Printf("[%s] [SKIP] %s (Scheduled at hour %s)", time.Now().Format("2006-01-02 15:04:05"), task.Name, hourStr)
 		}
 	}
 }
