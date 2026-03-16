@@ -10,16 +10,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"time"
 )
 
 type Task struct {
-	Name     string   `json:"name"`
-	Command  string   `json:"command"`
-	Args     []string `json:"args"`
-	Schedule string   `json:"schedule"` // "hourly" or "daily"
-	Hour     *int     `json:"hour,omitempty"`
-	Enabled  bool     `json:"enabled"`
+	Name    string   `json:"name"`
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
+	Hour    *int     `json:"hour,omitempty"`
+	Enabled bool     `json:"enabled"`
 }
 
 func main() {
@@ -53,16 +53,16 @@ func main() {
 	multiWriter := io.MultiWriter(os.Stdout, f)
 	logger := log.New(multiWriter, "", 0)
 
-	logger.Printf("[%s] [INFO] gocron Service Started. Interval: %v (PID: %d)", 
+	logger.Printf("[%s] [INFO] gocron Service Started. Interval: %v (PID: %d)",
 		time.Now().Format("2006-01-02 15:04:05"), *interval, os.Getpid())
-	logger.Printf("[%s] [INFO] Config: %s, Log: %s", 
+	logger.Printf("[%s] [INFO] Config: %s, Log: %s",
 		time.Now().Format("2006-01-02 15:04:05"), *configPath, *logPath)
 
 	for {
 		runTasks(logger, *configPath)
-		logger.Printf("[%s] [INFO] Sleeping for %v. Next run at %s", 
-			time.Now().Format("2006-01-02 15:04:05"), 
-			*interval, 
+		logger.Printf("[%s] [INFO] Sleeping for %v. Next run at %s",
+			time.Now().Format("2006-01-02 15:04:05"),
+			*interval,
 			time.Now().Add(*interval).Format("15:04:05"))
 		time.Sleep(*interval)
 	}
@@ -90,14 +90,14 @@ func isProcessRunning(pid int) bool {
 		return false
 	}
 	if runtime.GOOS == "windows" {
-		// On Windows, FindProcess always succeeds. 
+		// On Windows, FindProcess always succeeds.
 		// We use a specific hack: try to get a handle with 0 access.
 		// For simplicity in this script, we check if the process is still in the task list.
 		cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH")
 		output, _ := cmd.Output()
 		return len(output) > 0 && (string(output)[0] != 'I') // "INFO: No tasks..."
 	}
-	return process.Signal(os.Signal(0)) == nil
+	return process.Signal(syscall.Signal(0)) == nil
 }
 
 func runTasks(logger *log.Logger, configPath string) {
@@ -123,12 +123,11 @@ func runTasks(logger *log.Logger, configPath string) {
 			continue
 		}
 
-		isHourly := task.Schedule == "" || task.Schedule == "hourly"
-		isDailyMatch := task.Schedule == "daily" && task.Hour != nil && *task.Hour == currentHour
+		shouldRun := task.Hour == nil || *task.Hour == currentHour
 
-		if isHourly || isDailyMatch {
+		if shouldRun {
 			logger.Printf("[%s] [EXEC] %s (%s %v)", time.Now().Format("2006-01-02 15:04:05"), task.Name, task.Command, task.Args)
-			
+
 			cmdName := task.Command
 			if runtime.GOOS == "windows" && (cmdName == "python" || cmdName == "python3") {
 				if _, err := exec.LookPath(cmdName); err != nil {
@@ -151,7 +150,7 @@ func runTasks(logger *log.Logger, configPath string) {
 			if task.Hour != nil {
 				hourStr = fmt.Sprintf("%d", *task.Hour)
 			}
-			logger.Printf("[%s] [SKIP] %s (Scheduled for %s at hour %s)", time.Now().Format("2006-01-02 15:04:05"), task.Name, task.Schedule, hourStr)
+			logger.Printf("[%s] [SKIP] %s (Scheduled at hour %s)", time.Now().Format("2006-01-02 15:04:05"), task.Name, hourStr)
 		}
 	}
 }
